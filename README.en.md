@@ -10,7 +10,7 @@ A verified end-to-end deployment of ComfyUI + MiniMax H3 (text-to-video / image-
 
 [![GitHub stars](https://img.shields.io/github/stars/Xplore-LAB/minimax-h3-dgx-spark?style=flat&label=stars&color=gold)](https://github.com/Xplore-LAB/minimax-h3-dgx-spark/stargazers)
 [![license](https://img.shields.io/badge/license-MIT-1683c4?style=flat)](LICENSE)
-[![ComfyUI](https://img.shields.io/badge/ComfyUI-v0.30.0-32b643?style=flat)](https://github.com/comfyanonymous/ComfyUI)
+[![ComfyUI](https://img.shields.io/badge/ComfyUI-v0.45.0-32b643?style=flat)](https://github.com/Comfy-Org/ComfyUI)
 [![Docker](https://img.shields.io/badge/Docker-compose-7e35d5?style=flat)](docker-compose.yml)
 
 [简体中文](README.md) · **English**
@@ -21,7 +21,7 @@ A verified end-to-end deployment of ComfyUI + MiniMax H3 (text-to-video / image-
 
 ## ⚡ MiniMax H3 on DGX Spark in One Minute
 
-This repo is a complete recipe for running MiniMax H3 on a single NVIDIA DGX Spark / GB10 (Blackwell SM121, aarch64, 121-128GB unified memory). Weights total about 42.5 GB, everything runs inside Docker (NGC PyTorch 25.11 + ComfyUI v0.30.0), and models, inputs, and outputs live on an external NVMe drive.
+This repo is a complete recipe for running MiniMax H3 on a single NVIDIA DGX Spark / GB10 (Blackwell SM121, aarch64, 121-128GB unified memory). Weights total about 42.5 GB, everything runs inside Docker (NGC PyTorch 26.10 + ComfyUI v0.45.0), and models, inputs, and outputs live on an external NVMe drive.
 
 | What you want to do | What you get |
 |---|---|
@@ -31,59 +31,67 @@ This repo is a complete recipe for running MiniMax H3 on a single NVIDIA DGX Spa
 
 ## ✨ Key Capabilities
 
-- **Fully containerized**: the host only needs DGX OS, drivers, Docker, and NVIDIA Container Toolkit; ComfyUI and all dependencies live in the container, and the NGC-customized torch is kept untouched
+- **Fully containerized**: the host only needs DGX OS, drivers, Docker, and NVIDIA Container Toolkit; ComfyUI and all dependencies live in the container, and application dependencies use an isolated Python environment
 - **Video with sound**: besides the video VAE (FP16, 5.21 GB) there is an audio VAE (FP32, 0.605 GB) for joint audio-video output
 - **Full model stack**: FL2VA pruned INT8 convrot main model (21.0 GB) + Qwen3-VL-32B NVFP4 AWQ text encoder (15.7 GB)
 - **Engineering scripts**: `scripts/` ships init_storage, preflight, download, verify_models, status, and collect_diagnostics tooling
-- **Troubleshooting handbook**: a 12-section troubleshooting doc plus benchmark log and architecture notes
+- **Troubleshooting handbook**: a 13-section troubleshooting doc plus benchmark log and architecture notes
 
 ## 🚀 Quick Start
 
-### 1. Fetch the ComfyUI source (this repo does not vendor upstream code)
+### 1. Initialize and check
 
 ```bash
-./scripts/prepare_comfyui_src.sh    # downloads v0.30.0 via codeload into comfyui-src/
-```
-
-### 2. Initialize + check
-
-```bash
-make init DATA_ROOT=/mnt/<your-NVMe>/minimax-h3   # generates .env and creates directories
+make init DATA_ROOT=/mnt/<your-NVMe>/minimax-h3
 make preflight
-make gpu-check     # should print torch.cuda.is_available() = True, GPU: NVIDIA GB10
 ```
 
-⚠️ Do not run other large-model containers (qwen/vllm, etc.) in parallel while generating video; unified memory will be exhausted.
-
-### 3. Build + download models + launch
+### 2. Build the environment
 
 ```bash
-make build
-make download       # only the 4 required files (42.5 GB, resumable)
-make verify-models
-make up && make logs    # wait for "To see the GUI go to: http://0.0.0.0:8188"
-curl http://127.0.0.1:8188/system_stats   # returns 200
+make build       # prepares release sources and builds an isolated stable Python environment
+make gpu-check   # should report CUDA available and NVIDIA GB10
 ```
 
-If HuggingFace connections drop, add `HF_ENDPOINT=https://hf-mirror.com` to `.env`; set `HF_TOKEN` when authentication is required (never commit it to git).
+Source code comes from its GitHub upstreams. Model weights come from [ModelScope China](https://modelscope.cn/models/Comfy-Org/MiniMax-H3). Builds validate the ComfyUI source version against `COMFYUI_REF`. Move an old or unmarked `comfyui-src/` aside before rebuilding.
 
-### 4. Compile and bake in torchaudio (critical)
+The upgrade target is NGC `26.10-py3` + ComfyUI `v0.45.0`. NGC contains a custom `2.15.0a0` torch build. This project creates `/opt/h3-venv` inside the container and installs upstream stable PyTorch `2.15.0` and torchvision `0.29.2`, isolated from NGC Python extensions. The host does not install these dependencies.
 
-The H3 audio VAE requires `import torchaudio`, but the NGC torch (`2.10.0a0+b558c986e8.nv25.11`) matches no PyPI torchaudio wheel ABI, so a source build is mandatory. The NGC torch commit `b558c986e8` lacks stable API headers; the 2025-09-13 commit `87ff22e49ed0` builds successfully:
+Direct application dependencies are pinned in `docker/requirements-stable.txt`, and transitive dependencies in `docker/requirements-lock.txt` (stable releases checked on 2026-11-11). The installed package list is stored at `/opt/h3-runtime-packages.txt` in the image. The frontend is `1.58.7`, workflow templates `0.11.106`, embedded docs `0.5.16`, comfy-kitchen `0.2.41`, and comfy-aimdo `0.6.0`. System packages follow the NGC/Ubuntu package channels.
+
+PyTorch 2.15.0 pins cuSPARSELt 0.8.1, whose ARM wheel has a confirmed `sbsa` platform-tag defect. The build verifies AArch64 native libraries against RECORD, corrects only the WHEEL tag and its RECORD entry, records the adjustment in `/opt/h3-runtime-adjustments.json`, then runs full `pip check`. See the [upstream issue](https://github.com/pytorch/pytorch/issues/202632).
+
+ComfyUI v0.45.0 uses `comfy.audio` in its H3 nodes and audio preprocessing. It no longer requires torchaudio, so the old `87ff22e49ed0` source-build workaround is removed. Historical performance measurements still refer to NGC 25.11 / ComfyUI v0.30.0 and do not validate the upgraded environment.
+
+On 2026-11-11, the upgraded environment passed CUDA operator tests, actual H3 audio VAE encode/decode, and complete text-to-video generation with audio on GB10 / driver 580.178.04. A cold-start 608×352 job requesting 96 frames with 20 sampling steps completed in 135.87 seconds and produced 107 frames / 4.458 seconds. See the [validation record](docs/基准测试记录表.md#7-2026-11-11-ngc-2610-升级验收) for the exact configuration and coverage.
+
+### 3. Download models and launch
 
 ```bash
-curl -L -o /tmp/torchaudio-src.tar.gz \
-  https://codeload.github.com/pytorch/audio/tar.gz/87ff22e49ed0
-docker cp /tmp/torchaudio-src.tar.gz minimax-h3-comfyui:/tmp/
-docker exec minimax-h3-comfyui bash -c '
-  cd /tmp && tar xzf torchaudio-src.tar.gz
-  pip install --no-build-isolation --no-deps /tmp/audio-87ff22e49ed0
-  python -c "import torchaudio; print(torchaudio.__version__)"   # → 2.8.0a0
-'
-docker commit minimax-h3-comfyui local/minimax-h3-comfyui:v0.30.0-ta   # bake it in!
+make check-model-source  # compare ModelScope metadata without downloading weights
+make download            # four required files, resumable .part downloads
+make verify-models       # offline full-size and SHA-256 checks; reads about 42.5 GB
+make up
+make status
 ```
 
-### 5. Generate your first video (HTTP API, with sound)
+Paths, sizes and SHA-256 checksums are pinned in `docker/model_manifest.json`. Valid existing models are reused. A corrupt installed file is replaced only after a new download passes validation; allow disk space for the replacement. `make download-r2v` adds the optional Ref2VA model (about 21 GB).
+
+Public models normally need no authentication. Set `MODELSCOPE_API_TOKEN` in `.env` if required, and never commit it. `HF_TOKEN` / `HF_ENDPOINT` no longer control these downloads. Existing `hf-cache/` directories are left intact.
+
+⚠️ Do not run other large-model containers alongside video generation; they compete for unified memory.
+
+### 4. Generate and validate a video with sound
+
+```bash
+make smoke  # 608×352, 96 frames: submit, wait, normalize/mux, validate audio/video tracks
+./scripts/smoke.sh --prompt "A whale in the ocean, clear and audible ocean sounds" --prefix whale
+./scripts/smoke.sh --print-workflow  # preview API JSON without submitting
+```
+
+The template is `workflows/minimax_h3_t2v_api.json`. Use `--first-frame image.png` for an image in `input/`. The script obtains actual filenames from task history and writes `<H3_DATA_ROOT>/output/<prefix>_final.mp4`. The default timeout is 30 minutes (`--timeout` overrides it); a timeout does not cancel the queued/running task. Track presence and duration are checked automatically; picture quality, audible loudness and synchronization still require human review.
+
+Manual steps and multi-segment stitching are documented below.
 
 Core node chain: `UNETLoader(FL2VA) + CLIPLoader(Qwen3VL) + VAELoader x2 (video + audio) → MiniMaxH3SigmaShift → MiniMaxH3ImageToVideo → KSampler (20 steps, cfg=1.0) → VAEDecode + VAEDecodeAudio → CreateVideo/SaveVideo + SaveAudio`
 
@@ -112,9 +120,8 @@ Pattern: sampling runs about 26-47s per step; time scales with frames × resolut
 
 ## 🛡️ Boundaries and Caveats
 
-- Any in-container installation must be baked into the image with `docker commit`, or it is lost when the container is recreated
-- `docker commit` also bakes in the temporary container entrypoint; when recreating, check `docker inspect ... --format '{{.Config.Entrypoint}}'`, and if it is not `/usr/bin/tini`, start with an explicit `--entrypoint /usr/bin/tini ... -- /usr/local/bin/h3-entrypoint`
-- Never pip install torch inside the container; if CUDA is unavailable, run `make gpu-check` to triage drivers and the container toolkit first
+- Record dependency changes in the Dockerfile and rebuild the image so recreated containers remain reproducible
+- Update the dependency pins and rebuild when changing packages; run `make gpu-check` to diagnose CUDA availability
 - Exit code 137 or system stalls mean unified memory pressure; stop other large-model containers and lower the resolution
 - Silent video means the workflow lacks audio nodes; wire in VAEDecodeAudio + SaveAudio
 - Expose the service only through an SSH tunnel or a trusted LAN
@@ -123,7 +130,7 @@ Pattern: sampling runs about 26-47s per step; time scales with frames × resolut
 
 - [First-video tutorial](docs/2026-08-04_MiniMaxH3_第一条视频教程.md): full HTTP API workflow script
 - [Multi-segment film tutorial](docs/2026-08-04_MiniMaxH3_多段视频创作教程.md): stitching recipe for longer films
-- [Troubleshooting](docs/故障排查.md): the full 12-section handbook
+- [Troubleshooting](docs/故障排查.md): the full 13-section handbook
 - [Benchmark log](docs/基准测试记录表.md): measured runtimes
 - [Architecture and optimization notes](docs/架构与优化说明.md): design details
 - [Prompt templates](docs/提示词模板.md): prompt references for video generation
@@ -133,7 +140,8 @@ Note: the docs are currently written in Chinese.
 ## ✅ Definition of Done
 
 - [ ] `make gpu-check` passes, port 8188 returns 200
-- [ ] `docker exec minimax-h3-comfyui python -c "import torchaudio"` works (2.8.0a0)
+- [ ] `docker exec minimax-h3-comfyui python -c "import torch, comfy.audio; print(torch.__version__)"` works
+- [ ] `make smoke` completes and the result has video and audio tracks
 - [ ] Three consecutive generations succeed at 608×352 / 736×416 / 864×480
 - [ ] Output contains both video and audio (joint A/V)
 - [ ] Image-to-video (photo to motion) works
