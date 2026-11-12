@@ -3,7 +3,7 @@ SHELL := /usr/bin/env bash
 
 DATA_ROOT ?=
 
-.PHONY: help init preflight build rebuild gpu-check download download-r2v verify-models up stop restart logs status diagnostics clean-container
+.PHONY: help init preflight prepare-source build rebuild gpu-check download download-r2v verify-models check-model-source smoke test up stop restart logs status diagnostics clean-container
 
 help:
 	@echo "MiniMax H3 / DGX Spark commands"
@@ -18,6 +18,9 @@ help:
 	@echo "  make status"
 	@echo "  make download-r2v"
 	@echo "  make diagnostics"
+	@echo "  make check-model-source  # ModelScope metadata, no weights downloaded"
+	@echo "  make smoke               # generate and validate a short video with audio"
+	@echo "  make test                # local regression tests, no GPU required"
 
 init:
 	@if [[ -z "$(DATA_ROOT)" ]]; then \
@@ -28,15 +31,18 @@ init:
 preflight:
 	@./scripts/preflight.sh
 
-build:
+prepare-source:
+	@./scripts/prepare_comfyui_src.sh
+
+build: prepare-source
 	@docker compose build
 
-rebuild:
+rebuild: prepare-source
 	@docker compose build --no-cache
 
 gpu-check:
-	@docker compose run --rm --no-deps --entrypoint python comfyui -c \
-	  'import platform, torch; print("arch =", platform.machine()); print("torch =", torch.__version__); print("cuda =", torch.version.cuda); print("torch.cuda.is_available() =", torch.cuda.is_available()); assert torch.cuda.is_available(); print("GPU:", torch.cuda.get_device_name(0)); print("capability:", torch.cuda.get_device_capability(0))'
+	@docker compose run --rm --no-deps --entrypoint /opt/nvidia/nvidia_entrypoint.sh \
+	  comfyui python /usr/local/bin/h3-validate-runtime
 
 download:
 	@./scripts/download_fl2va.sh
@@ -46,6 +52,15 @@ download-r2v:
 
 verify-models:
 	@./scripts/verify_models.sh
+
+check-model-source:
+	@./scripts/check_model_source.sh
+
+smoke:
+	@./scripts/smoke.sh
+
+test:
+	@python3 -m unittest discover -s tests -v
 
 up:
 	@docker compose up -d
@@ -69,4 +84,4 @@ diagnostics:
 
 clean-container:
 	@docker compose down --remove-orphans
-	@docker image rm "local/minimax-h3-comfyui:$${COMFYUI_REF:-v0.30.0}" 2>/dev/null || true
+	@docker image rm "local/minimax-h3-comfyui:$${COMFYUI_REF:-v0.45.0}" 2>/dev/null || true
