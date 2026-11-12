@@ -1,21 +1,28 @@
 #!/usr/bin/env bash
-# 下载 ComfyUI 源码到 comfyui-src/（本仓库不携带上游源码，构建前先跑一次）
-# 用 codeload 镜像：容器/构建机 GitHub 直连常 TLS 断连，codeload 更稳。
+# Prepare exactly the ComfyUI ref used by Compose; never overwrite an existing checkout.
 set -Eeuo pipefail
 
-REF="${COMFYUI_REF:-v0.30.0}"
-DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-SRC="$DIR/comfyui-src"
+requested_ref="${COMFYUI_REF:-}"
+source "$(dirname "$0")/common.sh"
+REF="${requested_ref:-${COMFYUI_REF:-v0.45.0}}"
+SRC="${PROJECT_DIR}/comfyui-src"
 
-if [[ -d "$SRC/comfy" ]]; then
-  echo "[prepare] comfyui-src/ 已存在，跳过下载"
-  exit 0
+if [[ -e "$SRC" ]]; then
+  if [[ -d "$SRC/comfy" && -f "$SRC/.h3-source-ref" && "$(cat "$SRC/.h3-source-ref")" == "$REF" ]]; then
+    info "ComfyUI ${REF} source already prepared."
+    exit 0
+  fi
+  die "comfyui-src/ is incomplete, untracked or uses another ref. Move it aside, then rerun for ${REF}."
 fi
 
-echo "[prepare] 下载 ComfyUI ${REF} (codeload)..."
-mkdir -p "$SRC"
-curl -L --retry 3 -o /tmp/comfyui-src.tar.gz \
-  "https://codeload.github.com/comfyanonymous/ComfyUI/tar.gz/refs/tags/${REF}"
-tar xzf /tmp/comfyui-src.tar.gz -C "$SRC" --strip-components=1
-rm -f /tmp/comfyui-src.tar.gz
-echo "[prepare] 完成: ${SRC}"
+work="$(mktemp -d "${PROJECT_DIR}/.comfyui-src.XXXXXX")"
+trap 'rm -rf "$work"' EXIT
+info "Downloading ComfyUI ${REF} from codeload..."
+curl -fL --retry 3 -o "$work/source.tar.gz" \
+  "https://codeload.github.com/Comfy-Org/ComfyUI/tar.gz/refs/tags/${REF}"
+mkdir "$work/source"
+tar xzf "$work/source.tar.gz" -C "$work/source" --strip-components=1
+[[ -d "$work/source/comfy" && -f "$work/source/main.py" ]] || die "Invalid ComfyUI archive."
+printf '%s\n' "$REF" > "$work/source/.h3-source-ref"
+mv "$work/source" "$SRC"
+info "Prepared: ${SRC} (${REF})"

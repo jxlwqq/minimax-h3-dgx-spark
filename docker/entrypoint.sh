@@ -7,6 +7,7 @@ args=(
   python main.py
   --listen 0.0.0.0
   --port 8188
+  --temp-directory /opt/ComfyUI/temp
   --disable-auto-launch
   --reserve-vram "${RESERVE_VRAM_GB:-12}"
   --vram-headroom "${VRAM_HEADROOM_GB:-3}"

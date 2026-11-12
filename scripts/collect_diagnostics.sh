@@ -30,7 +30,7 @@ docker compose logs --tail=500 comfyui >"${out}/comfyui-logs.txt" 2>&1 || true
 docker stats --no-stream >"${out}/docker-stats.txt" 2>&1 || true
 
 if [[ -f .env ]]; then
-  sed -E 's/^(HF_TOKEN=).*/\1***REDACTED***/' .env >"${out}/env-redacted.txt"
+  sed -E 's/^((HF_TOKEN|MODELSCOPE_API_TOKEN)=).*/\1***REDACTED***/' .env >"${out}/env-redacted.txt"
 fi
 
 find "${H3_DATA_ROOT}/models" -maxdepth 3 -type f -printf '%p\t%s bytes\n' \

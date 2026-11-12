@@ -1,0 +1,9 @@
+.git
+.env
+.env.*
+diagnostics
+docs
+tests
+**/__pycache__
+.comfyui-src.*
+*.log

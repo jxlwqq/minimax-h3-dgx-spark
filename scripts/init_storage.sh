@@ -18,7 +18,7 @@ if [[ ! -w "${parent}" ]]; then
   create_cmd=(sudo mkdir -p)
 fi
 
-"${create_cmd[@]}" "${DATA_ROOT}"/{models/diffusion_models,models/text_encoders,models/vae,input,output,temp,user,custom_nodes,hf-cache,logs}
+"${create_cmd[@]}" "${DATA_ROOT}"/{models/diffusion_models,models/text_encoders,models/vae,input,output,temp,user,custom_nodes,logs}
 
 if [[ ! -w "${DATA_ROOT}" ]]; then
   sudo chown -R "$(id -u):$(id -g)" "${DATA_ROOT}"
